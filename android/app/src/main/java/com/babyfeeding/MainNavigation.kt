@@ -1,8 +1,5 @@
 package com.babyfeeding
 
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -10,7 +7,6 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.compose.NavHost
@@ -18,6 +14,9 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.babyfeeding.ui.home.HomeScreen
+import com.babyfeeding.ui.history.HistoryScreen
+import com.babyfeeding.ui.settings.SettingsScreen
+import com.babyfeeding.ui.stats.StatsScreen
 
 sealed class Screen(
     val route: String,
@@ -69,38 +68,14 @@ fun MainNavigation() {
                 HomeScreen()
             }
             composable(Screen.History.route) {
-                PlaceholderScreen(
-                    title = "History",
-                    innerPadding = PaddingValues()
-                )
+                HistoryScreen()
             }
             composable(Screen.Stats.route) {
-                PlaceholderScreen(
-                    title = "Statistics",
-                    innerPadding = PaddingValues()
-                )
+                StatsScreen()
             }
             composable(Screen.Settings.route) {
-                PlaceholderScreen(
-                    title = "Settings",
-                    innerPadding = PaddingValues()
-                )
+                SettingsScreen()
             }
         }
-    }
-}
-
-@Composable
-private fun PlaceholderScreen(
-    title: String,
-    innerPadding: PaddingValues
-) {
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(innerPadding),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(text = "$title screen")
     }
 }
