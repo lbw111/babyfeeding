@@ -180,14 +180,34 @@ enum class Acceptance { LIKED, OKAY, REFUSED }
 
 ### 6.2 同步协议
 
+**端口**: 8765
+**发现端口**: 8766 (UDP广播)
+
+**HTTP API 端点**:
+
+| 方法 | 路径 | 描述 | 请求体 | 响应 |
+|------|------|------|--------|------|
+| GET | `/health` | 心跳检查 | - | `{"status": "ok"}` |
+| GET | `/records?since={timestamp}` | 获取自timestamp后的记录 | - | `[FeedingRecord, ...]` |
+| POST | `/records` | 创建记录 | `FeedingRecord` | `{"id": "..."}` |
+| PUT | `/records/{id}` | 更新记录 | `FeedingRecord` | `{"success": true}` |
+| DELETE | `/records/{id}` | 软删除记录 | - | `{"success": true}` |
+| GET | `/babies` | 获取所有宝宝 | - | `[Baby, ...]` |
+| POST | `/babies` | 创建宝宝 | `Baby` | `{"id": "..."}` |
+| PUT | `/babies/{id}` | 更新宝宝 | `Baby` | `{"success": true}` |
+| GET | `/sync/status` | 获取同步状态 | - | `{"lastSync": timestamp, "deviceCount": n}` |
+
+**发现协议**:
 ```
-1. 设备A发送 UDP广播 "BFT_DISCOVER" 到局域网
-2. 设备B响应 "BFT_HERE" + 设备信息
-3. 设备A选择连接到设备B
-4. 握手：交换最新记录时间戳
-5. 按时间戳增量同步记录
-6. 心跳保活（30秒间隔）
+1. 设备A发送 UDP广播 "BFT_DISCOVER" 到 8766 端口
+2. 设备B响应 "BFT_HERE:{deviceId}:{deviceName}:{serverPort}" 到发送者
+3. 设备A选择连接到设备B的 serverPort
+4. 握手：GET /sync/status 交换最新记录时间戳
+5. 按时间戳增量同步记录（GET /records?since={lastSync}）
+6. 客户端每30秒 GET /health 保持心跳
 ```
+
+**JSON 格式**: 所有请求/响应使用 `Content-Type: application/json`
 
 ### 6.3 冲突处理
 
