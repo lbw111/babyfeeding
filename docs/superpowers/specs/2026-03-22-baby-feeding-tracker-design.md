@@ -11,17 +11,29 @@
 
 ## 2. 技术栈
 
+### Android 端
+
 | 组件 | 技术选型 |
 |------|---------|
 | 平台 | Android (minSdk 26, targetSdk 34) |
 | 语言 | Kotlin 1.9+ |
 | UI框架 | Jetpack Compose + Material Design 3 |
 | 架构 | MVVM + Clean Architecture |
-| 本地数据库 | Room |
-| 局域网通信 | HTTP Server (NanoHTTPD) + OkHttp |
+| 网络 | Retrofit2 + OkHttp |
 | 依赖注入 | Hilt |
 | 异步 | Kotlin Coroutines + Flow |
-| 时间处理 | java.time (LocalDateTime) |
+| 本地缓存 | DataStore Preferences |
+
+### 后端服务
+
+| 组件 | 技术选型 |
+|------|---------|
+| 语言 | Java 17+ |
+| 框架 | Spring Boot 3.x |
+| 数据库 | MySQL 8.0 |
+| ORM | Spring Data JPA |
+| 发现服务 | Spring Boot 内嵌 + UDP |
+| 端口 | 8765 (HTTP API), 8766 (UDP发现) |
 
 ---
 
@@ -57,10 +69,10 @@
 
 ### 3.4 家庭共享
 
-- 同一WiFi下自动发现设备
-- 主设备开启热点或连接到同一路由器后成为服务器
-- 数据实时同步到其他设备
-- 支持最多5台设备同时连接
+- 后端服务部署在局域网内某台机器上
+- 同一WiFi下Android设备自动发现后端服务
+- 所有数据通过后端服务统一存储到MySQL
+- 多台Android设备可同时连接后端，数据实时共享
 
 ### 3.5 宝宝信息
 
@@ -122,43 +134,73 @@
 
 ## 5. 数据模型
 
-### 5.1 核心实体
+### 5.1 后端实体 (Spring Boot / JPA)
+
+```java
+@Entity
+@Table(name = "feeding_records")
+public class FeedingRecord {
+    @Id
+    private String id;
+    private String babyId;
+    @Enumerated(EnumType.STRING)
+    private FeedingType type;
+    private Long timestamp;
+    private Integer amountMl;
+    @Enumerated(EnumType.STRING)
+    private MilkType milkType;
+    @Enumerated(EnumType.STRING)
+    private FoodType foodType;
+    @Enumerated(EnumType.STRING)
+    private FoodAmount foodAmount;
+    @Enumerated(EnumType.STRING)
+    private Acceptance acceptance;
+    private String note;
+    private String createdBy;
+    private Long createdAt;
+    private Long updatedAt;
+    private Boolean deleted = false;
+}
+
+@Entity
+@Table(name = "babies")
+public class Baby {
+    @Id
+    private String id;
+    private String name;
+    private Long birthDate;
+    private String avatarPath;
+}
+```
+
+### 5.2 Android DTO
 
 ```kotlin
-@Entity(tableName = "feeding_records")
-data class FeedingRecord(
-    @PrimaryKey val id: String = UUID.randomUUID().toString(),
+data class FeedingRecordDto(
+    val id: String,
     val babyId: String,
-    val type: FeedingType, // BOTTLE, SOLID_FOOD
-    val timestamp: Long, // 毫秒时间戳
-    val amountMl: Int? = null, // 瓶喂用
-    val milkType: MilkType? = null, // BOTTLE用
-    val foodType: FoodType? = null, // SOLID_FOOD用
-    val foodAmount: FoodAmount? = null, // SOLID_FOOD用
-    val acceptance: Acceptance? = null, // SOLID_FOOD用
-    val note: String? = null,
-    val createdBy: String, // 设备ID
-    val createdAt: Long = System.currentTimeMillis(),
-    val updatedAt: Long = System.currentTimeMillis()
+    val type: FeedingType,
+    val timestamp: Long,
+    val amountMl: Int?,
+    val milkType: MilkType?,
+    val foodType: FoodType?,
+    val foodAmount: FoodAmount?,
+    val acceptance: Acceptance?,
+    val note: String?,
+    val createdBy: String,
+    val createdAt: Long,
+    val updatedAt: Long
 )
 
-@Entity(tableName = "babies")
-data class Baby(
-    @PrimaryKey val id: String = UUID.randomUUID().toString(),
-    val name: String,
-    val birthDate: Long, // 毫秒时间戳
-    val avatarPath: String? = null
-)
-
-data class Device(
+data class BabyDto(
     val id: String,
     val name: String,
-    val isServer: Boolean,
-    val lastSyncTime: Long
+    val birthDate: Long,
+    val avatarPath: String?
 )
 ```
 
-### 5.2 枚举类型
+### 5.3 枚举类型
 
 ```kotlin
 enum class FeedingType { BOTTLE, SOLID_FOOD }
@@ -168,52 +210,67 @@ enum class FoodAmount { SMALL, MEDIUM, LARGE }
 enum class Acceptance { LIKED, OKAY, REFUSED }
 ```
 
+```java
+public enum FeedingType { BOTTLE, SOLID_FOOD }
+public enum MilkType { BREAST_MILK, FORMULA }
+public enum FoodType { RICE_CEREAL, FRUIT_PUREE, VEGETABLE_PUREE, MEAT_PUREE, OTHER }
+public enum FoodAmount { SMALL, MEDIUM, LARGE }
+public enum Acceptance { LIKED, OKAY, REFUSED }
+```
+
 ---
 
-## 6. 局域网同步机制
+## 6. 后端服务与同步机制
 
-### 6.1 架构
+### 6.1 系统架构
 
-- **服务器模式**: 拥有最新数据的设备作为服务器
-- **客户端模式**: 其他设备连接到服务器同步数据
-- **发现机制**: UDP广播发现同一WiFi下的设备
+```
+┌─────────────┐      HTTP/REST       ┌──────────────────┐
+│  Android    │◄────────────────────►│  Spring Boot     │
+│  Device 1    │                      │  Backend         │
+└─────────────┘                      │  (MySQL)         │
+                                      └────────┬─────────┘
+┌─────────────┐      HTTP/REST               │
+│  Android    │◄──────────────────────────────┘
+│  Device 2   │
+└─────────────┘
+```
 
-### 6.2 同步协议
+- 后端服务部署在局域网内一台机器（电脑/NAS/树莓派）
+- 所有Android设备通过HTTP REST API与后端通信
+- 后端将数据存储在MySQL数据库
+- Android设备通过UDP广播发现后端服务
 
-**端口**: 8765
-**发现端口**: 8766 (UDP广播)
+### 6.2 发现机制
 
-**HTTP API 端点**:
+**端口**: 8765 (HTTP API), 8766 (UDP发现)
+
+```
+1. Android发送 UDP广播 "BFT_DISCOVER" 到 8766 端口
+2. 后端服务响应 "BFT_HERE:{host}:{port}" 到发送者
+3. Android获取后端地址，开始REST API调用
+4. 每30秒发送心跳检查后端可用性
+```
+
+### 6.3 REST API 端点
 
 | 方法 | 路径 | 描述 | 请求体 | 响应 |
 |------|------|------|--------|------|
 | GET | `/health` | 心跳检查 | - | `{"status": "ok"}` |
-| GET | `/records?since={timestamp}` | 获取自timestamp后的记录 | - | `[FeedingRecord, ...]` |
-| POST | `/records` | 创建记录 | `FeedingRecord` | `{"id": "..."}` |
-| PUT | `/records/{id}` | 更新记录 | `FeedingRecord` | `{"success": true}` |
-| DELETE | `/records/{id}` | 软删除记录 | - | `{"success": true}` |
-| GET | `/babies` | 获取所有宝宝 | - | `[Baby, ...]` |
-| POST | `/babies` | 创建宝宝 | `Baby` | `{"id": "..."}` |
-| PUT | `/babies/{id}` | 更新宝宝 | `Baby` | `{"success": true}` |
-| GET | `/sync/status` | 获取同步状态 | - | `{"lastSync": timestamp, "deviceCount": n}` |
-
-**发现协议**:
-```
-1. 设备A发送 UDP广播 "BFT_DISCOVER" 到 8766 端口
-2. 设备B响应 "BFT_HERE:{deviceId}:{deviceName}:{serverPort}" 到发送者
-3. 设备A选择连接到设备B的 serverPort
-4. 握手：GET /sync/status 交换最新记录时间戳
-5. 按时间戳增量同步记录（GET /records?since={lastSync}）
-6. 客户端每30秒 GET /health 保持心跳
-```
+| GET | `/api/records?since={timestamp}` | 获取自timestamp后的记录 | - | `[FeedingRecord, ...]` |
+| POST | `/api/records` | 创建记录 | `FeedingRecord` | `{"id": "..."}` |
+| PUT | `/api/records/{id}` | 更新记录 | `FeedingRecord` | `{"success": true}` |
+| DELETE | `/api/records/{id}` | 软删除记录 | - | `{"success": true}` |
+| GET | `/api/babies` | 获取所有宝宝 | - | `[Baby, ...]` |
+| POST | `/api/babies` | 创建宝宝 | `Baby` | `{"id": "..."}` |
+| PUT | `/api/babies/{id}` | 更新宝宝 | `Baby` | `{"success": true}` |
 
 **JSON 格式**: 所有请求/响应使用 `Content-Type: application/json`
 
-### 6.3 冲突处理
+### 6.4 冲突处理
 
-- 同一设备ID的记录以最新updatedAt为准
-- 新记录优先保留
-- 删除操作同步为"软删除"标记
+- 同一ID的记录以最新updatedAt为准更新
+- 删除操作使用软删除（deleted=true）
 
 ---
 
@@ -226,8 +283,8 @@ enum class Acceptance { LIKED, OKAY, REFUSED }
 - [ ] 历史记录按日期分组显示
 - [ ] 可以查看今日、本周的喂养统计
 - [ ] 可以管理宝宝信息（姓名、出生日期）
-- [ ] 同一WiFi下两台设备可以发现彼此
-- [ ] 数据可以在两台设备间同步
+- [ ] 后端服务启动后可以被Android设备发现
+- [ ] 多台Android设备可以同时访问后端，数据同步
 
 ### 7.2 体验验收
 
@@ -238,7 +295,8 @@ enum class Acceptance { LIKED, OKAY, REFUSED }
 
 ### 7.3 技术验收
 
-- [ ] 应用可以在 Android 8.0+ 运行
-- [ ] 数据存储在本地 Room 数据库
-- [ ] 遵循 MVVM 架构
-- [ ] 代码结构清晰，模块间低耦合
+- [ ] Android应用可以在 Android 8.0+ 运行
+- [ ] 后端服务可以在 Java 17+ 环境运行
+- [ ] 数据存储在 MySQL 数据库
+- [ ] Android端遵循 MVVM 架构
+- [ ] 后端遵循 Spring Boot 三层架构（Controller/Service/Repository）
